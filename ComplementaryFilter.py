@@ -45,7 +45,44 @@ class ComplementaryFilter(object):
         q_mag = np.quaternion(q_mag_0, q_mag_1, q_mag_2, q_mag_3)
         # 
         # Eq 36.
-        q_body =  q_acc * q_mag
+        self.q_body =  q_acc * q_mag
+        self.q_t_ = self.q_body
 
-    def observation(self, imumsg):
-        pass
+    def predict(self, gyro, dt):
+        # 
+        # Eq 40.
+        w_x, w_y, w_z = gyro
+        sub_array = np.array([[0, -w_z, w_y], [w_z, 0, -w_x], [-w_y, w_x, 0]])
+        omega = np.zeros((4,4))
+        omega[0, 1:3] = gyro.T
+        omega[1:3, 0] = -gyro
+        omega[1:3, 1:3] = -sub_array
+        # 
+        # Eq 42. 
+        return q_t_ + np.dot(omega, q_t_) * dt
+
+    def correct(self, imumsg, q_pred):
+        # 
+        # Eq 44.
+        acc = imumsg.acc / np.norm(imumsg.acc)
+        norm = np.norm(acc)
+        g_pred = np.dot(quaternion.as_rotation_matrix(quaternion.inverse()), acc)
+        # 
+        # Eq 47.
+        g_x, g_y, g_z
+        dq_0 = np.sqrt((g_z + 1) / 2)
+        dq_1 = - g_y / (np.sqrt(2 * (g_z + 1)))
+        dq_2 = g_x / (np.sqrt(2 * (g_z + 1)))
+        dq_3 = 0
+        dq = np.quaternion(dq_0, dq_1, dq_2, dq_3)
+
+
+    def observation(self, imumsg, dt):
+        # 
+        # Update the last measurement. 
+        self.q_t_ = self.q_body
+        # 
+        # Prediction. 
+        q_pred = self.predict(imumsg.gyro, dt)
+        # 
+        # Correction. 
