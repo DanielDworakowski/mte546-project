@@ -40,35 +40,41 @@ class ComplementaryFilter(object):
         # Eq 25.
         q_acc = None
         if initialReading.acc[2] >= 0:
-            tmp = 2*(a_z+1)
+            tmp = np.sqrt(2*(a_z+1))
             q_acc_0 = np.sqrt((a_z + 1) / 2)
-            q_acc_1 = - a_y / np.sqrt(tmp)
-            q_acc_2 = a_x / np.sqrt(tmp)
+            q_acc_1 = -a_y / tmp
+            q_acc_2 =  a_x / tmp
             q_acc_3 = 0
             q_acc = np.quaternion(q_acc_0, q_acc_1,q_acc_2, q_acc_3)
         else:
-            tmp = 2*(1-a_z)
-            q_acc_0 = - a_y / np.sqrt(tmp)
+            tmp = np.sqrt(2*(1-a_z))
+            q_acc_0 = - a_y / tmp
             q_acc_1 = np.sqrt((1 - a_z) / 2)
             q_acc_2 = 0
-            q_acc_3 = a_x / np.sqrt(tmp)
+            q_acc_3 = a_x / tmp
             q_acc = np.quaternion(q_acc_0, q_acc_1,q_acc_2, q_acc_3)
         # 
-        # Eq 26.
-        R_acc = quaternion.as_rotation_matrix(q_acc)
-        l = np.dot(R_acc.T, initialReading.mag)
-        l_x, l_y, l_z = l
+        # Orientation estimate based entirely off one magnetometer reading. 
+        self.q_body = q_acc
         # 
-        # Eq 31.
-        gamma = np.sqrt(l_x ** 2 + l_y ** 2)
-        q_mag_0 = np.sqrt(gamma + l_x * np.sqrt(gamma)) / np.sqrt(2 * gamma)
-        q_mag_1 = 0
-        q_mag_2 = 0
-        q_mag_3 = l_y / (np.sqrt(2) * np.sqrt(gamma + l_x * np.sqrt(gamma)))
-        q_mag = np.quaternion(q_mag_0, q_mag_1, q_mag_2, q_mag_3)
-        # 
-        # Eq 36.
-        self.q_body =  q_acc * q_mag
+        # If there is a magnetometer message proceed. 
+        if initialReading.mag is not None:
+            # 
+            # Eq 26.
+            R_acc = quaternion.as_rotation_matrix(q_acc)
+            l = np.dot(R_acc.T, initialReading.mag)
+            l_x, l_y, l_z = l
+            # 
+            # Eq 31.
+            gamma = np.sqrt(l_x ** 2 + l_y ** 2)
+            q_mag_0 = np.sqrt(gamma + l_x * np.sqrt(gamma)) / np.sqrt(2 * gamma)
+            q_mag_1 = 0
+            q_mag_2 = 0
+            q_mag_3 = l_y / (np.sqrt(2) * np.sqrt(gamma + l_x * np.sqrt(gamma)))
+            q_mag = np.quaternion(q_mag_0, q_mag_1, q_mag_2, q_mag_3)
+            # 
+            # Eq 36.
+            self.q_body =  q_acc * q_mag
         self.q_t_ = self.q_body
 
 
@@ -141,26 +147,26 @@ class ComplementaryFilter(object):
         # 
         # Update q_pred.
         q_pred_update = q_pred * dqHat
-        # 
-        # Rotate the magnetice field vector.
-        # Eq 54.
-        l = np.dot(quaternion.as_rotation_matrix(q_pred_update).T, imumsg.mag)
-        l_x, l_y, l_z = l
-        # 
-        # Calculate the delta quaternion Eq 58.
-        gamma = l_x ** 2 + l_y ** 2
-        dq_0 = np.sqrt(gamma + l_x * np.sqrt(gamma)) / np.sqrt(2 * gamma)
-        dq_1 = 0
-        dq_2 = 0
-        dq_3 = l_y / np.sqrt(2 * (gamma + l_x * np.sqrt(gamma)))
-        dq = np.quaternion(dq_0, dq_1, dq_2, dq_3)
-        dqHat = self._interpolate(dq, self.beta)
-        # 
-        # Eq 59.
-        q_pred_update = q_pred_update * dqHat
+        if imumsg.mag is not None:
+            # 
+            # Rotate the magnetice field vector.
+            # Eq 54.
+            l = np.dot(quaternion.as_rotation_matrix(q_pred_update).T, imumsg.mag)
+            l_x, l_y, l_z = l
+            # 
+            # Calculate the delta quaternion Eq 58.
+            gamma = l_x ** 2 + l_y ** 2
+            dq_0 = np.sqrt(gamma + l_x * np.sqrt(gamma)) / np.sqrt(2 * gamma)
+            dq_1 = 0
+            dq_2 = 0
+            dq_3 = l_y / np.sqrt(2 * (gamma + l_x * np.sqrt(gamma)))
+            dq = np.quaternion(dq_0, dq_1, dq_2, dq_3)
+            dqHat = self._interpolate(dq, self.beta)
+            # 
+            # Eq 59.
+            q_pred_update = q_pred_update * dqHat
         # 
         # Normalize.
-        # self.q_body = q_pred_update / np.linalg.norm(q_pred_update)
         return q_pred_update.normalized()
 
     def _estimateBias(self, imumsg):
@@ -199,6 +205,9 @@ class ComplementaryFilter(object):
         b = quaternion.as_euler_angles(self.q_body.inverse()) # State is inverse.
         b *= 180. / np.pi
         return b
+
+    def getState(self):
+        return quaternion.as_float_array(self.q_body.inverse())
 
     def __repr__(self):
         return 'Body Pos: ' + str(self.getEuler())
