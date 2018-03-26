@@ -2,9 +2,24 @@ import numpy as np
 import quaternion
 
 class ImuMsg(object):
-    mag = np.zeros((3,1))
-    acc = np.zeros((3,1))
-    gyro = np.zeros((3,1))
+    mag = np.zeros((3,))
+    acc = np.zeros((3,))
+    gyro = np.zeros((3,))
+    ts = -1
+
+    def __repr__(self):
+        ret = ''
+        ret +='--------\n'
+        ret += 'ts: ' + str(self.ts) + '\n'
+        ret += 'MAG: \n'
+        ret += str(self.mag)
+        ret += '\nACC: \n'
+        ret += str(self.acc)
+        ret += '\nGYRO: \n'
+        ret += str(self.gyro)
+        ret += '\n--------'
+        return ret
+
 
 class ComplementaryFilter(object):
 
@@ -13,13 +28,13 @@ class ComplementaryFilter(object):
         # Filter parameters.
         self.alpha = 0.01
         self.beta = 0.01
-        self.gyroBias = np.zeros((3,1))
-        self.prev_imumsg = ImuMsg()
+        self.gyroBias = np.zeros((3,))
+        self.prev_imumsg = initialReading
         self.g = 9.81
         # 
         # Initial guess for the orientation will be a direct calculation
         # as described in section 5.4.
-        acc_norm = initialReading.acc / np.norm(initialReading.acc)
+        acc_norm = initialReading.acc / np.linalg.norm(initialReading.acc)
         a_x, a_y, a_z = acc_norm
         # 
         # Eq 25.
@@ -41,7 +56,7 @@ class ComplementaryFilter(object):
         # 
         # Eq 26.
         R_acc = quaternion.as_rotation_matrix(q_acc)
-        l = np.dot(R_acc.T, mag)
+        l = np.dot(R_acc.T, initialReading.mag)
         l_x, l_y, l_z = l
         # 
         # Eq 31.
@@ -57,40 +72,45 @@ class ComplementaryFilter(object):
         self.q_t_ = self.q_body
 
 
-    def predict(self, gyro, dt):
+    def _predict(self, base, gyro, dt):
         # 
         # Eq 40.
         w_x, w_y, w_z = gyro
         sub_array = np.array([[0, -w_z, w_y], [w_z, 0, -w_x], [-w_y, w_x, 0]])
         omega = np.zeros((4,4))
-        omega[0, 1:3] = gyro.T
-        omega[1:3, 0] = -gyro
-        omega[1:3, 1:3] = -sub_array
+        omega[0, 1:4] = gyro.T
+        omega[1:4, 0] = -gyro
+        omega[1:4, 1:4] = -sub_array
         # 
         # Eq 42. 
-        return q_t_ + np.dot(omega, q_t_) * dt
+        npret = quaternion.as_float_array(base) + np.dot(omega, quaternion.as_float_array(base)) * dt * 0.5
+        # 
+        # Weird thing to allow for constructor to work with a numpy array.
+        return np.quaternion(*npret).normalized()
 
     def _interpolate(self, q2, gain):
         qI = np.quaternion(1, 0, 0, 0)
         # 
         # Eq 50.
         qbar = None
-        if q2[0] > 0.9:
+        q2np = quaternion.as_float_array(q2)
+        if q2np[0] > 0.9:
             qbar = (1 - gain) * qI + gain * q2
         else:
             # 
             # Eq 48.
-            omega = np.acos(q2[0])
+            omega = np.arccos(q2np[0])
             qbar = np.sin((1 - gain) * omega) / np.sin(omega) * qI + np.sin(gain * omega) / np.sin(omega) * q2
         # 
         # Eq 51.
-        qHat = qbar / np.norm(qbar)
+        # qHat = qbar / np.linalg.norm(qbar)
+        qHat = qbar.normalized()
         return qHat
 
     def adaptiveGain(self, acc):
         # 
         # Eq 60.
-        e_m  = np.abs(np.norm(acc) - self.g) / self.g
+        e_m  = np.abs(np.linalg.norm(acc) - self.g) / self.g
         # 
         # Fig 5. 
         if e_m < 0.1:
@@ -100,12 +120,12 @@ class ComplementaryFilter(object):
         else:
             return -10 * e_m + 2
 
-    def correct(self, imumsg, q_pred):
+    def _correct(self, imumsg, q_pred):
         # 
         # Eq 44.
-        acc = imumsg.acc / np.norm(imumsg.acc)
-        norm = np.norm(acc)
-        g_pred = np.dot(quaternion.as_rotation_matrix(quaternion.inverse()), acc)
+        acc = imumsg.acc / np.linalg.norm(imumsg.acc)
+        norm = np.linalg.norm(acc)
+        g_pred = np.dot(quaternion.as_rotation_matrix(q_pred.inverse()), acc) ##### DOUBLE CHECK is it q_pred.inverse?????
         # 
         # Eq 47.
         g_x, g_y, g_z = g_pred
@@ -140,7 +160,8 @@ class ComplementaryFilter(object):
         q_pred_update = q_pred_update * dqHat
         # 
         # Normalize.
-        self.q_body = q_pred_update / np.norm(q_pred_update)
+        # self.q_body = q_pred_update / np.linalg.norm(q_pred_update)
+        return q_pred_update.normalized()
 
     def _estimateBias(self, imumsg):
         # 
@@ -154,7 +175,10 @@ class ComplementaryFilter(object):
         unbiased.gyro -= self.gyroBias
         return imumsg
 
-    def observation(self, imumsg, dt):
+    def observation(self, imumsg):
+        # 
+        # Calculate the dt. 
+        dt = imumsg.ts - self.prev_imumsg.ts
         # 
         # Update the last measurement. 
         self.q_t_ = self.q_body
@@ -163,10 +187,18 @@ class ComplementaryFilter(object):
         filtered = self._estimateBias(imumsg)
         # 
         # Prediction. 
-        q_pred = self.predict(filtered.gyro, dt)
+        q_pred = self._predict(self.q_t_, filtered.gyro, dt)
         # 
         # Correction. 
-        self.q_body = self.correct(filtered, q_pred)
+        self.q_body = self._correct(filtered, q_pred)
         # 
         # Store message as previous.
         self.prev_imumsg = imumsg
+
+    def getEuler(self):
+        b = quaternion.as_euler_angles(self.q_body.inverse()) # State is inverse.
+        b *= 180. / np.pi
+        return b
+
+    def __repr__(self):
+        return 'Body Pos: ' + str(self.getEuler())
