@@ -36,13 +36,19 @@ def getIMUMsg(data, idx, scale):
 # Run the filter over a file. 
 def filter(args):
     df = pd.read_csv(args.file)
+    q_init = None
+    if args.gt is not None:
+        df2 = pd.read_csv(args.gt)
+        q_init = np.quaternion(*df2.as_matrix()[0, :])
+    # 
+    # Scale for the ts.
     scale = 1
     if args.isNS:
         scale = 1e9
     # 
     # Get the first message and construct.
     msg = getIMUMsg(df, 0, scale)
-    fv = ComplementaryFilter.ComplementaryFilter(msg)
+    fv = ComplementaryFilter.ComplementaryFilter(msg, q_init)
     # 
     # Collect all states. 
     state = [(msg.ts, fv.getEuler())]
@@ -54,6 +60,9 @@ def filter(args):
         fv.observation(msg)
         state.append((msg.ts, fv.getEuler()))
         quat.append(fv.getState())
+    # 
+    # PLOTTING
+    # 
     ts_arr, state_arr = zip(*state)
     # 
     # Convert to numpy.
@@ -62,7 +71,6 @@ def filter(args):
     # 
     # GT.
     if args.gt is not None:
-        df2 = pd.read_csv(args.gt)
         # 
         # Only take check for where there is data.
         maxLen = len(df2)
@@ -71,7 +79,7 @@ def filter(args):
         quat = np.array(quat)[0:maxLen]
         diff = np.sqrt(np.sum((q_gt - quat) ** 2, axis=1))
         plt.figure()
-        plt.plot(t[0:maxLen], diff)
+        plt.plot(diff)
         quat_gt = quaternion.as_quat_array(q_gt)
         # 
         # Plot GT RPY.
@@ -80,12 +88,21 @@ def filter(args):
         plt.plot(rpy[:,0], label='Roll')
         plt.plot(rpy[:,1], label='Pitch')
         plt.plot(rpy[:,2], label='Yaw')
+        # plt.plot(q_gt[:,0], label='w')
+        # plt.plot(q_gt[:,1], label='x')
+        # plt.plot(q_gt[:,2], label='y')
+        # plt.plot(q_gt[:,3], label='y')
         plt.legend()
 
     plt.figure()
-    plt.plot(t, s[:,0], label='Roll')
-    plt.plot(t, s[:,1], label='Pitch')
-    plt.plot(t, s[:,2], label='Yaw')
+    quat = np.array(quat)
+    # plt.plot(quat[:,0], label='w')
+    # plt.plot(quat[:,1], label='x')
+    # plt.plot(quat[:,2], label='y')
+    # plt.plot(quat[:,3], label='y')
+    plt.plot(s[:,0], label='Roll')
+    plt.plot(s[:,1], label='Pitch')
+    plt.plot(s[:,2], label='Yaw')
     plt.xlabel('Time (s)')
     plt.ylabel('Angle (deg)')
     plt.legend()

@@ -20,10 +20,12 @@ class ImuMsg(object):
         ret += '\n--------'
         return ret
 
-
+# 
+# http://www.mdpi.com/1424-8220/15/8/19302/pdf
+# http://docs.ros.org/lunar/api/imu_complementary_filter/html/complementary__filter_8cpp_source.html
 class ComplementaryFilter(object):
 
-    def __init__(self, initialReading):
+    def __init__(self, initialReading, q_init = None):
         # 
         # Filter parameters.
         self.alpha = 0.01
@@ -39,7 +41,7 @@ class ComplementaryFilter(object):
         # 
         # Eq 25.
         q_acc = None
-        if initialReading.acc[2] >= 0:
+        if a_z >= 0:
             tmp = np.sqrt(2*(a_z+1))
             q_acc_0 = np.sqrt((a_z + 1) / 2)
             q_acc_1 = -a_y / tmp
@@ -74,9 +76,11 @@ class ComplementaryFilter(object):
             q_mag = np.quaternion(q_mag_0, q_mag_1, q_mag_2, q_mag_3)
             # 
             # Eq 36.
-            self.q_body =  q_acc * q_mag
-        self.q_t_ = self.q_body
-
+            self.q_body = q_acc * q_mag
+        # 
+        # Check if there is a quaternion to initialize with instead of the direct guess.
+        if q_init is not None:
+            self.q_body = q_init.inverse() # State is inverse.
 
     def _predict(self, base, gyro, dt):
         # 
@@ -109,7 +113,6 @@ class ComplementaryFilter(object):
             qbar = np.sin((1 - gain) * omega) / np.sin(omega) * qI + np.sin(gain * omega) / np.sin(omega) * q2
         # 
         # Eq 51.
-        # qHat = qbar / np.linalg.norm(qbar)
         qHat = qbar.normalized()
         return qHat
 
@@ -119,26 +122,34 @@ class ComplementaryFilter(object):
         e_m  = np.abs(np.linalg.norm(acc) - self.g) / self.g
         # 
         # Fig 5. 
+        ret = None
         if e_m < 0.1:
-            return 1
+            ret = 1
         elif e_m > 0.2:
-            return 0
+            ret = 0
         else:
-            return -10 * e_m + 2
+            ret = (-10 * e_m + 2)
+        # 
+        # Scale wrt the normal gain.
+        return ret * self.alpha
 
     def _correct(self, imumsg, q_pred):
         # 
         # Eq 44.
         acc = imumsg.acc / np.linalg.norm(imumsg.acc)
-        norm = np.linalg.norm(acc)
         g_pred = np.dot(quaternion.as_rotation_matrix(q_pred.inverse()), acc) ##### DOUBLE CHECK is it q_pred.inverse?????
         # 
         # Eq 47.
         g_x, g_y, g_z = g_pred
+        # dq_0 = np.sqrt((g_z + 1) / 2)
+        # dq_1 = - g_y / (np.sqrt(2 * (g_z + 1)))
+        # dq_2 = g_x / (np.sqrt(2 * (g_z + 1)))
+        # dq_3 = 0
         dq_0 = np.sqrt((g_z + 1) / 2)
-        dq_1 = - g_y / (np.sqrt(2 * (g_z + 1)))
-        dq_2 = g_x / (np.sqrt(2 * (g_z + 1)))
+        dq_1 = -g_y / (2 * dq_0)
+        dq_2 =  g_x / (2 * dq_0)
         dq_3 = 0
+
         dq = np.quaternion(dq_0, dq_1, dq_2, dq_3)
         # 
         # Correct dq.
@@ -168,18 +179,32 @@ class ComplementaryFilter(object):
         # 
         # Normalize.
         return q_pred_update.normalized()
+    # 
+    # http://docs.ros.org/lunar/api/imu_complementary_filter/html/complementary__filter_8cpp_source.html#l00540
+    def _isSteadyState(self, imumsg):
+        acc_norm = np.linalg.norm(imumsg.acc)
+        accThresh = 0.1
+        angVelThresh = 0.2
+        deltaAngThresh = 0.01
+        if np.abs(acc_norm - self.g) > accThresh:
+            return False
+        if np.any(np.abs(imumsg.gyro - self.prev_imumsg.gyro) > deltaAngThresh):
+            return False
+        if np.any(np.abs(imumsg.gyro - self.gyroBias) > angVelThresh):
+            return False
+        return True
 
     def _estimateBias(self, imumsg):
         # 
         # Estimate the bias here.
-        #######
-        #######
-        #######
+        if self._isSteadyState(imumsg):
+            self.gyroBias += 0.01 * (imumsg.gyro - self.gyroBias)
         # 
         # Return the message with the bias removed.
         unbiased = imumsg
         unbiased.gyro -= self.gyroBias
-        return imumsg
+        print(self.gyroBias)
+        return unbiased
 
     def observation(self, imumsg):
         # 
@@ -187,16 +212,16 @@ class ComplementaryFilter(object):
         dt = imumsg.ts - self.prev_imumsg.ts
         # 
         # Update the last measurement. 
-        self.q_t_ = self.q_body
+        q_t_ = self.q_body
         # 
         # Bias estimation.
         filtered = self._estimateBias(imumsg)
         # 
         # Prediction. 
-        q_pred = self._predict(self.q_t_, filtered.gyro, dt)
+        pred = self._predict(q_t_, filtered.gyro, dt)
         # 
         # Correction. 
-        self.q_body = self._correct(filtered, q_pred)
+        self.q_body = self._correct(filtered, pred)
         # 
         # Store message as previous.
         self.prev_imumsg = imumsg
