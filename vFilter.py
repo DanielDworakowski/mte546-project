@@ -77,7 +77,7 @@ def filter(args):
         maxLen = min(len(df2), len(df))
         q_gt = df2.as_matrix()[0:maxLen]
         quat = np.array(quat)[0:maxLen]
-        diff = np.sqrt(np.sum((q_gt - quat) ** 2, axis=1))
+        diff = np.arccos(2 * (np.einsum('ij,ij->i', q_gt, quat) ** 2) - 1)
         plt.figure()
         plt.plot(diff)
         quat_gt = quaternion.as_quat_array(q_gt)

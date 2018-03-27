@@ -203,7 +203,7 @@ class ComplementaryFilter(object):
         # Return the message with the bias removed.
         unbiased = imumsg
         unbiased.gyro -= self.gyroBias
-        print(self.gyroBias)
+        # print(self.gyroBias)
         return unbiased
 
     def observation(self, imumsg):
