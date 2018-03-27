@@ -107,6 +107,7 @@ def filter(args):
     plt.ylabel('Angle (deg)')
     plt.legend()
     plt.show()
+    print(fv.gyroBias)
 #
 # Main code.
 if __name__ == '__main__':

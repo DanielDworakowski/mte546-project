@@ -31,6 +31,7 @@ class ComplementaryFilter(object):
         self.alpha = 0.01
         self.beta = 0.01
         self.gyroBias = np.zeros((3,))
+        self.gyroBias = np.array([-0.002, 0.020933373, 0.081622879])
         self.prev_imumsg = initialReading
         self.g = 9.81
         # 
