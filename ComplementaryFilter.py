@@ -28,10 +28,11 @@ class ComplementaryFilter(object):
     def __init__(self, initialReading, q_init = None):
         # 
         # Filter parameters.
-        self.alpha = 0.01
+        self.alpha = 0.009
         self.beta = 0.01
-        self.gyroBias = np.zeros((3,))
-        self.gyroBias = np.array([-0.002, 0.020933373, 0.081622879])
+        self.gyroBias = np.zeros((3,)) # No prior. 
+        self.gyroBias = np.array([-0.002, 0.020933373, 0.081622879]) # Dataset IMU.
+        # self.gyroBias = np.array([0.011764301, -0.013778673, 0.015057202]) # Sparkfun IMU.
         self.prev_imumsg = initialReading
         self.g = 9.81
         # 
@@ -142,10 +143,6 @@ class ComplementaryFilter(object):
         # 
         # Eq 47.
         g_x, g_y, g_z = g_pred
-        # dq_0 = np.sqrt((g_z + 1) / 2)
-        # dq_1 = - g_y / (np.sqrt(2 * (g_z + 1)))
-        # dq_2 = g_x / (np.sqrt(2 * (g_z + 1)))
-        # dq_3 = 0
         dq_0 = np.sqrt((g_z + 1) / 2)
         dq_1 = -g_y / (2 * dq_0)
         dq_2 =  g_x / (2 * dq_0)
